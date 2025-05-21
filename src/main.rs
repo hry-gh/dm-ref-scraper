@@ -244,7 +244,20 @@ fn parse_html_to_markdown(html: String, all_pages: &HashMap<String, Html>) -> St
     html = html2md::parse_html(&html);
 
     let naive_stripper = Regex::new("<a name.*> *</a>").unwrap();
-    naive_stripper.replace_all(&html, "").to_string()
+    let stripped = naive_stripper.replace_all(&html, "").to_string();
+
+    let link_backslah_regex = Regex::new("`.*\\.*`").unwrap();
+
+    let mut cleaned_body = stripped.clone();
+    for part in link_backslah_regex.captures_iter(stripped.as_str()) {
+        if let Some(inner) = part.get(1) {
+            let inner_string = inner.as_str();
+            cleaned_body = cleaned_body.replace(inner_string, &inner_string.replace('\\', ""));
+        }
+    }
+
+    cleaned_body
+
 }
 
 const TEXT_REPLACEMENTS: &[(char, &str)] = &[
