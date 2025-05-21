@@ -72,7 +72,10 @@ fn main() {
         create_page_from_html(page_tuple.0, page_tuple.1, &mut path_to_page,  &path_to_doc);
     }
 
-    path_to_page.insert("/".to_string(), Page { title: "Reference".to_string(), body: "".to_string() });
+    path_to_page.insert("/".to_string(), Page { title: "Reference".to_string(), body: "# dm-ref-scraper and Quartz
+
+This site is made using [Quartz](https://quartz.jzhao.xyz/) and [dm-ref-scraper](https://github.com/hry-gh/dm-ref-scraper). You probably want to start [here](/DM)!
+    ".to_string() });
 
     for page in &path_to_page {
         let path = page.0;
@@ -97,12 +100,6 @@ fn main() {
 
         let mut page_toml = toml_edit::DocumentMut::new();
         page_toml["title"] = value(page.title.replace("%%", r"\%\%"));
-
-        if page.title == "DM language details" {
-            let mut al = Array::new();
-            al.push("/index");
-            page_toml["alias"] = value(al);
-        }
 
         let front_matter_and_body = format!("+++\n{}+++\n{}", page_toml, remove_html_encode(&page.body));
 
