@@ -15,6 +15,7 @@ use toml_edit::value;
 struct Page {
     title: String,
     body: String,
+    version: Option<String>,
 }
 
 lazy_static! {
@@ -75,7 +76,7 @@ fn main() {
     path_to_page.insert("/".to_string(), Page { title: "Reference".to_string(), body: "# dm-ref-scraper and Quartz
 
 This site is made using [Quartz](https://quartz.jzhao.xyz/) and [dm-ref-scraper](https://github.com/hry-gh/dm-ref-scraper). You probably want to start [here](/DM)!
-    ".to_string() });
+    ".to_string(), version: None });
 
     for page in &path_to_page {
         let path = page.0;
@@ -103,6 +104,10 @@ This site is made using [Quartz](https://quartz.jzhao.xyz/) and [dm-ref-scraper]
         // Quartz will choke on doule-ampersands, but only in the title field
         page_toml["title"] = value(page.title.replace("%%", r"\%\%"));
 
+        if let Some(version) = &page.version {
+            page_toml["byond_version"] = value(version);
+        }
+
         let front_matter_and_body = format!("+++\n{}+++\n{}", page_toml, remove_html_encode(&page.body));
 
         let _ = file.write_all(front_matter_and_body.as_bytes());
@@ -119,7 +124,8 @@ lazy_static! {
 }
 
 fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut HashMap<String, Page>, path_to_doc: &HashMap<String, Html>) -> () {
-    let title = document.select(&TITLE_SELECTOR).next().unwrap().inner_html();
+    let title_element = document.select(&TITLE_SELECTOR).next().unwrap();
+    let title = title_element.inner_html();
 
     let mut headers: Vec<(String, Vec<String>, bool)> = Vec::new();
     for data_part in document.select(&DL_SELECTOR) {
@@ -138,7 +144,9 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
             opt_array.push(parse_html_to_markdown(stripped, &path_to_doc));
         }
 
-        headers.push((data_title, opt_array, data_part.value().has_class("codedd", scraper::CaseSensitivity::CaseSensitive)));
+        let is_code_header = data_part.value().has_class("codedd", scraper::CaseSensitivity::CaseSensitive) || data_title == "Format";
+
+        headers.push((data_title, opt_array, is_code_header));
     }
 
     let mut text: Vec<String> = Vec::new();
@@ -171,9 +179,9 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         }
 
         if part.0 == "See also" {
-            write_after.push(to_write);
+            write_after.push(clean_code_backslashes(&to_write));
         } else {
-            text.push(to_write);
+            text.push(clean_code_backslashes(&to_write));
         }
     }
 
@@ -181,8 +189,8 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         match text_part.value().name() {
             "p" => {
 
-                if text_part.value().has_class("note", scraper::CaseSensitivity::CaseSensitive) {
-                    text.push(format!("> [!note]\n> {}", parse_html_to_markdown(text_part.inner_html(), path_to_doc)));
+                if text_part.value().has_class("note", scraper::CaseSensitivity::CaseSensitive) || text_part.inner_html().starts_with("Note:") {
+                    text.push(format!("> [!note]\n> {}", parse_html_to_markdown(text_part.inner_html().replace("Note:", ""), path_to_doc)));
                 } else {
                     text.push(parse_html_to_markdown(text_part.inner_html(), path_to_doc));
                 }
@@ -199,11 +207,17 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         text.push(part);
     }
 
+    let version = match title_element.attr("byondver") {
+        Some(version) => Some(version.to_string()),
+        None => None
+    };
+
     path_to_page.insert(
         page_path.to_string(),
         Page {
             title: remove_html_encode(&title),
             body: text.join("\n\n"),
+            version
         },
     );
 }
@@ -249,16 +263,21 @@ fn parse_html_to_markdown(html: String, all_pages: &HashMap<String, Html>) -> St
 
     let stripped = NAIVE_STRIPPER_REGEX.replace_all(&html, "").to_string();
 
-    let mut cleaned_body = stripped.clone();
-    for part in LINK_BACKSLASH_REGEX.captures_iter(stripped.as_str()) {
+    clean_code_backslashes(&stripped)
+
+}
+
+fn clean_code_backslashes(input: &str) -> String {
+    let mut cleaning = input.to_string();
+
+    for part in LINK_BACKSLASH_REGEX.captures_iter(input) {
         if let Some(inner) = part.get(1) {
             let inner_string = inner.as_str();
-            cleaned_body = cleaned_body.replace(inner_string, &inner_string.replace('\\', ""));
+            cleaning = cleaning.replace(inner_string, &inner_string.replace('\\', ""));
         }
     }
 
-    cleaned_body
-
+    cleaning
 }
 
 const TEXT_REPLACEMENTS: &[(char, &str)] = &[
