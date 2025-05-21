@@ -9,13 +9,14 @@ use std::{
 use lazy_static::lazy_static;
 use regex::Regex;
 use scraper::{Html, Selector};
-use toml_edit::value;
+use toml_edit::{value, Array};
 
 #[derive(Debug)]
 struct Page {
     title: String,
     body: String,
     version: Option<String>,
+    tags: Vec<String>,
 }
 
 lazy_static! {
@@ -69,14 +70,16 @@ fn main() {
     }
 
     let mut path_to_page: HashMap<String, Page> = HashMap::new();
+    let mut page_is_object: HashMap<String, bool> = HashMap::new();
+
     for page_tuple in &path_to_doc {
-        create_page_from_html(page_tuple.0, page_tuple.1, &mut path_to_page,  &path_to_doc);
+        create_page_from_html(page_tuple.0, page_tuple.1, &mut path_to_page, &path_to_doc, &mut page_is_object);
     }
 
     path_to_page.insert("/".to_string(), Page { title: "Reference".to_string(), body: "# dm-ref-scraper and Quartz
 
 This site is made using [Quartz](https://quartz.jzhao.xyz/) and [dm-ref-scraper](https://github.com/hry-gh/dm-ref-scraper). You probably want to start [here](/DM)!
-    ".to_string(), version: None });
+    ".to_string(), version: None, tags: Vec::new() });
 
     for page in &path_to_page {
         let path = page.0;
@@ -108,6 +111,14 @@ This site is made using [Quartz](https://quartz.jzhao.xyz/) and [dm-ref-scraper]
             page_toml["byond_version"] = value(version);
         }
 
+        let mut tags = Array::from_iter(page.tags.iter());
+
+        if page_is_object.get(&page.title).is_some() {
+            tags.push("object");
+        }
+
+        page_toml["tags"] = tags.into();
+
         let front_matter_and_body = format!("+++\n{}+++\n{}", page_toml, remove_html_encode(&page.body));
 
         let _ = file.write_all(front_matter_and_body.as_bytes());
@@ -121,11 +132,29 @@ lazy_static! {
 
     static ref B_SELECTOR: Selector = Selector::parse("b").unwrap();
     static ref DD_SELECTOR: Selector = Selector::parse("dd").unwrap();
+
+    static ref PROC_VAR_REGEX: Regex = Regex::new(r"(?:procs)|(?:vars) \((.*)\)").unwrap();
 }
 
-fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut HashMap<String, Page>, path_to_doc: &HashMap<String, Html>) -> () {
+fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut HashMap<String, Page>, path_to_doc: &HashMap<String, Html>, page_is_object: &mut HashMap<String, bool>) -> () {
     let title_element = document.select(&TITLE_SELECTOR).next().unwrap();
     let title = title_element.inner_html();
+
+    let mut tags: Vec<String> = Vec::new();
+
+    if title.contains(" proc") {
+        tags.push("proc".to_string());
+    }
+
+    if title.contains(" var") {
+        tags.push("var".to_string());
+    }
+
+    if let Some(ok) = PROC_VAR_REGEX.captures(&title) {
+        if let Some(operator) = ok.get(1) {
+            page_is_object.insert(operator.as_str().to_string(), true);
+        };
+    };
 
     let mut headers: Vec<(String, Vec<String>, bool)> = Vec::new();
     for data_part in document.select(&DL_SELECTOR) {
@@ -134,6 +163,10 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         };
 
         let data_title = data_title_element.inner_html().replace(':', "");
+
+        if data_title.contains("When") {
+            tags.push("event".to_string());
+        }
 
         let mut opt_array: Vec<String> = Vec::new();
         for results in data_part.select(&DD_SELECTOR) {
@@ -231,7 +264,8 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         Page {
             title: remove_html_encode(&title),
             body: text.join("\n\n"),
-            version
+            version,
+            tags
         },
     );
 }
