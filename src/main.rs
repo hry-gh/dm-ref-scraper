@@ -155,17 +155,22 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
     for part in &headers {
         let mut to_write= format!("### {}", part.0);
 
-
         if part.1.len() > 1 {
             to_write.push_str("\n");
 
             for string in &part.1 {
 
-                // Even if this is a code header, if it is a link, we do not want to code-ify it
-                if part.2 && !string.starts_with("[") {
-                    to_write = format!("{}\n- `{}`", to_write, string.to_string());
+                if part.0 == "Args" && string.contains(":") {
+                    let split: Vec<&str> = string.split(":").collect();
+
+                    to_write = format!("{}\n- `{}`:{}", to_write, split[0], split[1])
                 } else {
-                    to_write = format!("{}\n- {}", to_write, string.to_string());
+                    // Even if this is a code header, if it is a link, we do not want to code-ify it
+                    if part.2 && !string.starts_with("[") {
+                        to_write = format!("{}\n- `{}`", to_write, string.to_string());
+                    } else {
+                        to_write = format!("{}\n- {}", to_write, string.to_string());
+                    }
                 }
             }
 
