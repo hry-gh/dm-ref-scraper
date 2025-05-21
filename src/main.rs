@@ -9,7 +9,7 @@ use std::{
 use lazy_static::lazy_static;
 use regex::Regex;
 use scraper::{Html, Selector};
-use toml_edit::{value, Array};
+use toml_edit::value;
 
 #[derive(Debug)]
 struct Page {
@@ -99,6 +99,8 @@ This site is made using [Quartz](https://quartz.jzhao.xyz/) and [dm-ref-scraper]
         };
 
         let mut page_toml = toml_edit::DocumentMut::new();
+
+        // Quartz will choke on doule-ampersands, but only in the title field
         page_toml["title"] = value(page.title.replace("%%", r"\%\%"));
 
         let front_matter_and_body = format!("+++\n{}+++\n{}", page_toml, remove_html_encode(&page.body));
@@ -119,7 +121,7 @@ lazy_static! {
 fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut HashMap<String, Page>, path_to_doc: &HashMap<String, Html>) -> () {
     let title = document.select(&TITLE_SELECTOR).next().unwrap().inner_html();
 
-    let mut headers: Vec<(String, Vec<String>)> = Vec::new();
+    let mut headers: Vec<(String, Vec<String>, bool)> = Vec::new();
     for data_part in document.select(&DL_SELECTOR) {
         let Some(data_title_element) = data_part.select(&B_SELECTOR).next() else {
             continue;
@@ -136,7 +138,7 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
             opt_array.push(parse_html_to_markdown(stripped, &path_to_doc));
         }
 
-        headers.push((data_title, opt_array));
+        headers.push((data_title, opt_array, data_part.value().has_class("codedd", scraper::CaseSensitivity::CaseSensitive)));
     }
 
     let mut text: Vec<String> = Vec::new();
@@ -150,12 +152,22 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
             to_write.push_str("\n");
 
             for string in &part.1 {
-                to_write = format!("{}\n- {}", to_write, string.to_string());
+
+                // Even if this is a code header, if it is a link, we do not want to code-ify it
+                if part.2 && !string.starts_with("[") {
+                    to_write = format!("{}\n- `{}`", to_write, string.to_string());
+                } else {
+                    to_write = format!("{}\n- {}", to_write, string.to_string());
+                }
             }
 
             to_write.push_str("\n");
         } else if let Some(wrap) = part.1.first() {
-            to_write = format!("{}\n> {}", to_write, wrap)
+            if part.2 {
+                to_write = format!("{}\n> `{}`", to_write, wrap)
+            } else {
+                to_write = format!("{}\n> {}", to_write, wrap)
+            }
         }
 
         if part.0 == "See also" {
