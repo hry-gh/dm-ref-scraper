@@ -188,9 +188,18 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
     for text_part in document.select(&TEXT_SELECTOR) {
         match text_part.value().name() {
             "p" => {
-
                 if text_part.value().has_class("note", scraper::CaseSensitivity::CaseSensitive) || text_part.inner_html().starts_with("Note:") {
-                    text.push(format!("> [!note]\n> {}", parse_html_to_markdown(text_part.inner_html().replace("Note:", ""), path_to_doc)));
+                    let mut note_type = "note";
+
+                    if text_part.value().has_class("deprecated", scraper::CaseSensitivity::CaseSensitive) {
+                        note_type = "deprecated";
+                    };
+
+                    if text_part.value().has_class("security", scraper::CaseSensitivity::CaseSensitive) {
+                        note_type = "danger";
+                    };
+
+                    text.push(format!("> [!{}]\n> {}", note_type, parse_html_to_markdown(text_part.inner_html().replace("Note:", ""), path_to_doc)));
                 } else {
                     text.push(parse_html_to_markdown(text_part.inner_html(), path_to_doc));
                 }
