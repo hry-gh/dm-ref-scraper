@@ -6,6 +6,7 @@ use std::{
     path::Path,
 };
 
+use lazy_static::lazy_static;
 use regex::Regex;
 use scraper::{Html, Selector};
 use toml_edit::{value, Array};
@@ -16,14 +17,8 @@ struct Page {
     body: String,
 }
 
-struct GlobalSelectors {
-    title_selector: Selector,
-    text_selector: Selector,
-    dl_selector: Selector,
-    b_selector: Selector,
-    dd_selector: Selector,
-
-    naive_stripper: Regex,
+lazy_static! {
+    static ref PAGE_SELECTOR: Selector = Selector::parse("a").unwrap();
 }
 
 fn main() {
@@ -50,26 +45,12 @@ fn main() {
 
     let parts: Vec<&str> = raw.split("<hr>").collect();
 
-    let page_selector = Selector::parse("a").unwrap();
-    let title_selector = Selector::parse("h2").unwrap();
-    let text_selector = Selector::parse("p,h3,xmp,pre,ul").unwrap();
-    let dl_selector = Selector::parse("dl").unwrap();
-
-    let b_selector = Selector::parse("b").unwrap();
-    let dd_selector = Selector::parse("dd").unwrap();
-
-    let naive_stripper = Regex::new("<a name.*></a>").unwrap();
-
-    let all_selectors = GlobalSelectors {
-        title_selector, text_selector, dl_selector, b_selector, dd_selector, naive_stripper
-    };
-
     let mut path_to_doc: HashMap<String, Html> = HashMap::new();
     let mut page_is_section: HashMap<String, bool> = HashMap::new();
     for page in parts.iter() {
         let document = Html::parse_document(page);
 
-        let Some(page_element) = document.select(&page_selector).next() else {
+        let Some(page_element) = document.select(&PAGE_SELECTOR).next() else {
             continue;
         };
 
@@ -88,7 +69,7 @@ fn main() {
 
     let mut path_to_page: HashMap<String, Page> = HashMap::new();
     for page_tuple in &path_to_doc {
-        create_page_from_html(page_tuple.0, page_tuple.1, &mut path_to_page,  &path_to_doc, &all_selectors);
+        create_page_from_html(page_tuple.0, page_tuple.1, &mut path_to_page,  &path_to_doc);
     }
 
     path_to_page.insert("/".to_string(), Page { title: "Reference".to_string(), body: "".to_string() });
@@ -119,7 +100,7 @@ fn main() {
 
         if page.title == "DM language details" {
             let mut al = Array::new();
-            al.push("index");
+            al.push("/index");
             page_toml["alias"] = value(al);
         }
 
@@ -129,22 +110,31 @@ fn main() {
     }
 }
 
-fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut HashMap<String, Page>, path_to_doc: &HashMap<String, Html>, selectors: &GlobalSelectors) -> () {
-    let title = document.select(&selectors.title_selector).next().unwrap().inner_html();
+lazy_static! {
+    static ref TITLE_SELECTOR: Selector = Selector::parse("h2").unwrap();
+    static ref TEXT_SELECTOR: Selector = Selector::parse("p,h3,xmp,pre,ul").unwrap();
+    static ref DL_SELECTOR: Selector = Selector::parse("dl").unwrap();
+
+    static ref B_SELECTOR: Selector = Selector::parse("b").unwrap();
+    static ref DD_SELECTOR: Selector = Selector::parse("dd").unwrap();
+}
+
+fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut HashMap<String, Page>, path_to_doc: &HashMap<String, Html>) -> () {
+    let title = document.select(&TITLE_SELECTOR).next().unwrap().inner_html();
 
     let mut headers: Vec<(String, Vec<String>)> = Vec::new();
-    for data_part in document.select(&selectors.dl_selector) {
-        let Some(data_title_element) = data_part.select(&selectors.b_selector).next() else {
+    for data_part in document.select(&DL_SELECTOR) {
+        let Some(data_title_element) = data_part.select(&B_SELECTOR).next() else {
             continue;
         };
 
         let data_title = data_title_element.inner_html().replace(':', "");
 
         let mut opt_array: Vec<String> = Vec::new();
-        for results in data_part.select(&selectors.dd_selector) {
+        for results in data_part.select(&DD_SELECTOR) {
             let mut stripped = results.inner_html();
 
-            stripped = selectors.naive_stripper.replace_all(&stripped, "").to_string();
+            stripped = NAIVE_STRIPPER_REGEX.replace_all(&stripped, "").to_string();
 
             opt_array.push(parse_html_to_markdown(stripped, &path_to_doc));
         }
@@ -178,7 +168,7 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         }
     }
 
-    for text_part in document.select(&selectors.text_selector) {
+    for text_part in document.select(&TEXT_SELECTOR) {
         match text_part.value().name() {
             "p" => {
 
@@ -209,15 +199,20 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
     );
 }
 
-fn parse_html_to_markdown(html: String, all_pages: &HashMap<String, Html>) -> String {
-    let code_regex = Regex::new("<(/)?(tt|code)>").unwrap();
-    let a_link_selector: &Selector = &Selector::parse("a[href]").unwrap();
+lazy_static! {
+    static ref CODE_REGEX: Regex = Regex::new("<(/)?(tt|code)>").unwrap();
+    static ref LINK_BACKSLASH_REGEX: Regex = Regex::new("(`.*\\.*`)").unwrap();
+    static ref NAIVE_STRIPPER_REGEX: Regex = Regex::new("<a name.*> *</a>").unwrap();
 
+    static ref A_LINK_SELECTOR: Selector = Selector::parse("a[href]").unwrap();
+}
+
+fn parse_html_to_markdown(html: String, all_pages: &HashMap<String, Html>) -> String {
     let mut html = html.replace('\n', " ");
-    html = code_regex.replace_all(&html, "`".to_string()).to_string();
+    html = CODE_REGEX.replace_all(&html, "`".to_string()).to_string();
 
     let fragment = Html::parse_fragment(&html);
-    for link in fragment.select(a_link_selector) {
+    for link in fragment.select(&A_LINK_SELECTOR) {
         if let Some(dest) = link.attr("href") {
 
             let final_destination = dest.replace('#', "");
@@ -243,13 +238,10 @@ fn parse_html_to_markdown(html: String, all_pages: &HashMap<String, Html>) -> St
 
     html = html2md::parse_html(&html);
 
-    let naive_stripper = Regex::new("<a name.*> *</a>").unwrap();
-    let stripped = naive_stripper.replace_all(&html, "").to_string();
-
-    let link_backslah_regex = Regex::new("`.*\\.*`").unwrap();
+    let stripped = NAIVE_STRIPPER_REGEX.replace_all(&html, "").to_string();
 
     let mut cleaned_body = stripped.clone();
-    for part in link_backslah_regex.captures_iter(stripped.as_str()) {
+    for part in LINK_BACKSLASH_REGEX.captures_iter(stripped.as_str()) {
         if let Some(inner) = part.get(1) {
             let inner_string = inner.as_str();
             cleaned_body = cleaned_body.replace(inner_string, &inner_string.replace('\\', ""));
@@ -281,9 +273,11 @@ const TEXT_REPLACEMENTS: &[(char, &str)] = &[
     (']', "rightsquare"),
 ];
 
-fn make_ref_web_safe(dirty_path: &String) -> String {
-    let clean_regex = Regex::new("[{}]").unwrap();
+lazy_static! {
+    static ref CLEAN_REGEX: Regex = Regex::new("[{}]").unwrap();
+}
 
+fn make_ref_web_safe(dirty_path: &String) -> String {
     let mut path = percent_encoding::percent_decode_str(dirty_path)
         .decode_utf8()
         .unwrap()
@@ -300,7 +294,7 @@ fn make_ref_web_safe(dirty_path: &String) -> String {
         path = path.replace("-", "minus");
     }
 
-    path = clean_regex.replace_all(&path, "").to_string();
+    path = CLEAN_REGEX.replace_all(&path, "").to_string();
 
     path
 }
