@@ -131,6 +131,7 @@ lazy_static! {
     static ref DL_SELECTOR: Selector = Selector::parse("dl").unwrap();
 
     static ref B_SELECTOR: Selector = Selector::parse("b").unwrap();
+    static ref DT_SELECTOR: Selector = Selector::parse("dt").unwrap();
     static ref DD_SELECTOR: Selector = Selector::parse("dd").unwrap();
 
     static ref PROC_VAR_REGEX: Regex = Regex::new(r"(?:procs)|(?:vars) \((.*)\)").unwrap();
@@ -164,9 +165,15 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
 
     let mut headers: Vec<(String, Vec<String>, bool)> = Vec::new();
     for data_part in document.select(&DL_SELECTOR) {
-        let Some(data_title_element) = data_part.select(&B_SELECTOR).next() else {
+        let Some(mut data_title_element) = data_part.select(&DT_SELECTOR).next() else {
             continue;
         };
+
+        if data_title_element.has_children() {
+            if let Some(data_inner_element) = data_title_element.select(&B_SELECTOR).next() {
+                data_title_element = data_inner_element;
+            }
+        }
 
         let data_title = data_title_element.inner_html().replace(':', "");
 
@@ -222,7 +229,7 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
             }
         }
 
-        if part.0 == "See also" {
+        if part.0 == "See also" || part.0.contains("/var") || part.0.contains("/proc") {
             write_after.push(clean_code_backslashes(&to_write));
         } else {
             text.push(clean_code_backslashes(&to_write));
@@ -288,7 +295,7 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
 lazy_static! {
     static ref CODE_REGEX: Regex = Regex::new("<(/)?(tt|code)>").unwrap();
     static ref LINK_BACKSLASH_REGEX: Regex = Regex::new("(`.*\\.*`)").unwrap();
-    static ref NAIVE_STRIPPER_REGEX: Regex = Regex::new("<a name.*> *</a>").unwrap();
+    static ref NAIVE_STRIPPER_REGEX: Regex = Regex::new("<a name.*>.*</a>").unwrap();
 
     static ref A_LINK_SELECTOR: Selector = Selector::parse("a[href]").unwrap();
 }
