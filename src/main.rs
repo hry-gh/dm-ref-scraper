@@ -113,7 +113,7 @@ This site is made using [Quartz](https://quartz.jzhao.xyz/) and [dm-ref-scraper]
 
         let mut tags = Array::from_iter(page.tags.iter());
 
-        if page_is_object.get(&page.title).is_some() {
+        if page_is_object.contains_key(&page.title) {
             tags.push("object");
         }
 
@@ -134,9 +134,10 @@ lazy_static! {
     static ref DD_SELECTOR: Selector = Selector::parse("dd").unwrap();
 
     static ref PROC_VAR_REGEX: Regex = Regex::new(r"(?:procs)|(?:vars) \((.*)\)").unwrap();
+    static ref PROC_VAR_NAME_REGEX: Regex = Regex::new(r"(.*) (?:proc)|(?:var)").unwrap();
 }
 
-fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut HashMap<String, Page>, path_to_doc: &HashMap<String, Html>, page_is_object: &mut HashMap<String, bool>) -> () {
+fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut HashMap<String, Page>, path_to_doc: &HashMap<String, Html>, page_is_object: &mut HashMap<String, bool>) {
     let title_element = document.select(&TITLE_SELECTOR).next().unwrap();
     let title = title_element.inner_html();
 
@@ -149,6 +150,11 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
     if title.contains(" var") {
         tags.push("var".to_string());
     }
+
+    let target_name = match PROC_VAR_NAME_REGEX.captures(&title) {
+        Some(capture) => capture.get(1).map(|group| group.as_str().to_owned()),
+        None => None
+    };
 
     if let Some(ok) = PROC_VAR_REGEX.captures(&title) {
         if let Some(operator) = ok.get(1) {
@@ -174,7 +180,7 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
 
             stripped = NAIVE_STRIPPER_REGEX.replace_all(&stripped, "").to_string();
 
-            opt_array.push(parse_html_to_markdown(stripped, &path_to_doc));
+            opt_array.push(parse_html_to_markdown(stripped, path_to_doc));
         }
 
         let is_code_header = data_part.value().has_class("codedd", scraper::CaseSensitivity::CaseSensitive) || data_title == "Format";
@@ -189,25 +195,25 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         let mut to_write= format!("### {}", part.0);
 
         if part.1.len() > 1 {
-            to_write.push_str("\n");
+            to_write.push('\n');
 
             for string in &part.1 {
 
-                if part.0 == "Args" && string.contains(":") {
-                    let split: Vec<&str> = string.split(":").collect();
+                if part.0 == "Args" && string.contains(':') {
+                    let split: Vec<&str> = string.split(':').collect();
 
                     to_write = format!("{}\n- `{}`:{}", to_write, split[0], split[1])
                 } else {
                     // Even if this is a code header, if it is a link, we do not want to code-ify it
-                    if part.2 && !string.starts_with("[") {
-                        to_write = format!("{}\n- `{}`", to_write, string.to_string());
+                    if part.2 && !string.starts_with('[') {
+                        to_write = format!("{}\n- `{}`", to_write, string);
                     } else {
-                        to_write = format!("{}\n- {}", to_write, string.to_string());
+                        to_write = format!("{}\n- {}", to_write, string);
                     }
                 }
             }
 
-            to_write.push_str("\n");
+            to_write.push('\n');
         } else if let Some(wrap) = part.1.first() {
             if part.2 {
                 to_write = format!("{}\n> `{}`", to_write, wrap)
@@ -242,8 +248,20 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
                     text.push(parse_html_to_markdown(text_part.inner_html(), path_to_doc));
                 }
             },
-            "h3" => text.push(format!("## {}", parse_html_to_markdown(text_part.inner_html(), path_to_doc))),
-            "xmp" => text.push(format!("```dream-maker\n{}\n```", text_part.inner_html().trim())),
+            "h3" => {
+                if text_part.inner_html() == "Example:" {
+                    continue;
+                }
+
+                text.push(format!("## {}", parse_html_to_markdown(text_part.inner_html(), path_to_doc)));
+            },
+            "xmp" => {
+                if let Some(ref target) = target_name {
+                    text.push(format!("```dream-maker /{}/\n{}\n```", target, text_part.inner_html().trim()));
+                } else {
+                    text.push(format!("```dream-maker\n{}\n```", text_part.inner_html().trim()));
+                }
+            },
             "pre" => text.push(format!("```\n{}\n```", text_part.inner_html().trim())),
             "ul" => text.push(parse_html_to_markdown(text_part.html(), path_to_doc)),
             _ => (),
@@ -254,10 +272,7 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         text.push(part);
     }
 
-    let version = match title_element.attr("byondver") {
-        Some(version) => Some(version.to_string()),
-        None => None
-    };
+    let version = title_element.attr("byondver").map(|version| version.to_string());
 
     path_to_page.insert(
         page_path.to_string(),
@@ -288,11 +303,9 @@ fn parse_html_to_markdown(html: String, all_pages: &HashMap<String, Html>) -> St
 
             let final_destination = dest.replace('#', "");
 
-            if let None = all_pages.get(&final_destination) {
-                if !final_destination.contains("http") {
-                    html = html.replace(&link.html(), &format!("**BROKEN LINK: {}**", make_ref_web_safe(&final_destination)));
-                    continue;
-                }
+            if all_pages.get(&final_destination).is_none() && !final_destination.contains("http") {
+                html = html.replace(&link.html(), &format!("**BROKEN LINK: {}**", make_ref_web_safe(&final_destination)));
+                continue;
             }
 
             html = html.replace(
@@ -353,7 +366,7 @@ lazy_static! {
     static ref CLEAN_REGEX: Regex = Regex::new("[{}]").unwrap();
 }
 
-fn make_ref_web_safe(dirty_path: &String) -> String {
+fn make_ref_web_safe(dirty_path: &str) -> String {
     let mut path = percent_encoding::percent_decode_str(dirty_path)
         .decode_utf8()
         .unwrap()
@@ -367,7 +380,7 @@ fn make_ref_web_safe(dirty_path: &String) -> String {
     path = path.replace("/index", "/index_page");
     
     if path.contains("operator") {
-        path = path.replace("-", "minus");
+        path = path.replace('-', "minus");
     }
 
     path = CLEAN_REGEX.replace_all(&path, "").to_string();
