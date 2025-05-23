@@ -190,7 +190,7 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
                 continue;
             }
 
-            opt_array.push(parse_html_to_markdown(stripped, path_to_doc));
+            opt_array.push(stripped);
         }
 
         let is_code_header = data_part.value().has_class("codedd", scraper::CaseSensitivity::CaseSensitive) || data_title == "Format";
