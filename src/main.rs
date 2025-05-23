@@ -185,7 +185,10 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         for results in data_part.select(&DD_SELECTOR) {
             let mut stripped = results.inner_html();
 
-            stripped = NAIVE_STRIPPER_REGEX.replace_all(&stripped, "").to_string();
+            stripped = parse_html_to_markdown(NAIVE_STRIPPER_REGEX.replace_all(&stripped, "").to_string(), path_to_doc);
+            if stripped.is_empty() {
+                continue;
+            }
 
             opt_array.push(parse_html_to_markdown(stripped, path_to_doc));
         }
@@ -230,9 +233,9 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         }
 
         if part.0 == "See also" || part.0.contains("/var") || part.0.contains("/proc") {
-            write_after.push(clean_code_backslashes(&to_write));
+            write_after.push(clean_code_backslashes(&clean_code_percentage(&to_write)));
         } else {
-            text.push(clean_code_backslashes(&to_write));
+            text.push(clean_code_backslashes(&clean_code_percentage(&to_write)));
         }
     }
 
@@ -295,6 +298,8 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
 lazy_static! {
     static ref CODE_REGEX: Regex = Regex::new("<(/)?(tt|code)>").unwrap();
     static ref LINK_BACKSLASH_REGEX: Regex = Regex::new("(`.*\\.*`)").unwrap();
+    static ref CODE_PERCENT_REGEX: Regex = Regex::new("`(.*)(%%)(.*)`").unwrap();
+
     static ref NAIVE_STRIPPER_REGEX: Regex = Regex::new("<a name.*>.*</a>").unwrap();
 
     static ref A_LINK_SELECTOR: Selector = Selector::parse("a[href]").unwrap();
@@ -331,8 +336,12 @@ fn parse_html_to_markdown(html: String, all_pages: &HashMap<String, Html>) -> St
 
     let stripped = NAIVE_STRIPPER_REGEX.replace_all(&html, "").to_string();
 
-    clean_code_backslashes(&stripped)
+    clean_code_backslashes(&clean_code_percentage(&stripped))
 
+}
+
+fn clean_code_percentage(input: &str) -> String {
+    CODE_PERCENT_REGEX.replace_all(input, r#"`${1}%25%25${3}`"#).to_string()
 }
 
 fn clean_code_backslashes(input: &str) -> String {
