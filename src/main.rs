@@ -9,12 +9,13 @@ use std::{
 use lazy_static::lazy_static;
 use regex::Regex;
 use scraper::{Html, Selector};
-use toml_edit::{value, Array};
+use toml_edit::{value, Array, Table};
 
 #[derive(Debug)]
 struct Page {
     title: String,
     body: String,
+    metadata: Vec<(String, Vec<String>)>,
     version: Option<String>,
     tags: Vec<String>,
 }
@@ -79,7 +80,7 @@ fn main() {
     path_to_page.insert("/".to_string(), Page { title: "Reference".to_string(), body: "# dm-ref-scraper and Quartz
 
 This site is made using [Quartz](https://quartz.jzhao.xyz/) and [dm-ref-scraper](https://github.com/hry-gh/dm-ref-scraper). You probably want to start [here](/DM)!
-    ".to_string(), version: None, tags: Vec::new() });
+    ".to_string(), version: None, tags: Vec::new(), metadata: Vec::new() });
 
     for page in &path_to_page {
         let path = page.0;
@@ -116,6 +117,14 @@ This site is made using [Quartz](https://quartz.jzhao.xyz/) and [dm-ref-scraper]
         if page_is_object.contains_key(&page.title) {
             tags.push("object");
         }
+
+        let mut headers = Table::new();
+
+        for item in &page.metadata {
+            headers[&item.0] = Array::from_iter(item.1.iter()).into();
+        };
+
+        page_toml["headers"] = headers.into();
 
         page_toml["tags"] = tags.into();
 
@@ -212,18 +221,19 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
                 if part.0 == "Args" && string.contains(':') {
                     let split: Vec<&str> = string.split(':').collect();
 
-                    to_write = format!("{}\n- `{}`:{}", to_write, split[0], split[1])
+                    to_write = format!("{}- `{}`:{}", to_write, split[0], split[1])
                 } else {
                     // Even if this is a code header, if it is a link, we do not want to code-ify it
                     if part.2 && !string.starts_with('[') {
-                        to_write = format!("{}\n- `{}`", to_write, string);
+                        to_write = format!("{}- `{}`", to_write, string);
                     } else {
-                        to_write = format!("{}\n- {}", to_write, string);
+                        to_write = format!("{}- {}", to_write, string);
                     }
                 }
+
+                to_write.push('\n');
             }
 
-            to_write.push('\n');
         } else if let Some(wrap) = part.1.first() {
             if part.2 {
                 to_write = format!("{}\n> `{}`", to_write, wrap)
@@ -284,13 +294,24 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
 
     let version = title_element.attr("byondver").map(|version| version.to_string());
 
+    let mut parsed_metadata = Vec::new();
+
+    for element in &headers {
+        if element.0 == "See also" {
+            continue;
+        }
+
+        parsed_metadata.push((element.0.to_owned(), element.1.to_owned().iter().map(|val| val.replace('\\', "").replace("%%", "\\%\\%")).collect()));
+    }
+
     path_to_page.insert(
         page_path.to_string(),
         Page {
             title: remove_html_encode(&title),
             body: text.join("\n\n"),
             version,
-            tags
+            tags,
+            metadata: parsed_metadata
         },
     );
 }
