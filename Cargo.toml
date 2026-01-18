@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 html-escape = "0.2.13"
 html2md = "0.2.15"
-lazy_static = "1.5.0"
 percent-encoding = "2.3.1"
 regex = "1.11.1"
 scraper = "0.23.1"
