@@ -74,7 +74,13 @@ fn main() {
     let mut page_is_object: HashMap<String, bool> = HashMap::new();
 
     for page_tuple in &path_to_doc {
-        create_page_from_html(page_tuple.0, page_tuple.1, &mut path_to_page, &path_to_doc, &mut page_is_object);
+        create_page_from_html(
+            page_tuple.0,
+            page_tuple.1,
+            &mut path_to_page,
+            &path_to_doc,
+            &mut page_is_object,
+        );
     }
 
     path_to_page.insert("/".to_string(), Page { title: "Reference".to_string(), body: "# dm-ref-scraper and Quartz
@@ -122,13 +128,17 @@ This site is made using [Quartz](https://quartz.jzhao.xyz/) and [dm-ref-scraper]
 
         for item in &page.metadata {
             headers[&item.0] = Array::from_iter(item.1.iter()).into();
-        };
+        }
 
         page_toml["headers"] = headers.into();
 
         page_toml["tags"] = tags.into();
 
-        let front_matter_and_body = format!("+++\n{}+++\n{}", page_toml, remove_html_encode(&page.body));
+        let body = remove_html_encode(&page.body);
+        let body = ORPHAN_TT_REGEX.replace_all(&body, "").to_string();
+        let body = escape_dollars_outside_code(&body);
+
+        let front_matter_and_body = format!("+++\n{}+++\n{}", page_toml, body);
 
         let _ = file.write_all(front_matter_and_body.as_bytes());
     }
@@ -138,16 +148,20 @@ lazy_static! {
     static ref TITLE_SELECTOR: Selector = Selector::parse("h2").unwrap();
     static ref TEXT_SELECTOR: Selector = Selector::parse("p,h3,xmp,pre,ul").unwrap();
     static ref DL_SELECTOR: Selector = Selector::parse("dl").unwrap();
-
     static ref B_SELECTOR: Selector = Selector::parse("b").unwrap();
     static ref DT_SELECTOR: Selector = Selector::parse("dt").unwrap();
     static ref DD_SELECTOR: Selector = Selector::parse("dd").unwrap();
-
     static ref PROC_VAR_REGEX: Regex = Regex::new(r"(?:procs)|(?:vars) \((.*)\)").unwrap();
     static ref PROC_VAR_NAME_REGEX: Regex = Regex::new(r"(.*) (?:proc)|(?:var)").unwrap();
 }
 
-fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut HashMap<String, Page>, path_to_doc: &HashMap<String, Html>, page_is_object: &mut HashMap<String, bool>) {
+fn create_page_from_html(
+    page_path: &String,
+    document: &Html,
+    path_to_page: &mut HashMap<String, Page>,
+    path_to_doc: &HashMap<String, Html>,
+    page_is_object: &mut HashMap<String, bool>,
+) {
     let title_element = document.select(&TITLE_SELECTOR).next().unwrap();
     let title = title_element.inner_html();
 
@@ -163,7 +177,7 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
 
     let target_name = match PROC_VAR_NAME_REGEX.captures(&title) {
         Some(capture) => capture.get(1).map(|group| group.as_str().to_owned()),
-        None => None
+        None => None,
     };
 
     if let Some(ok) = PROC_VAR_REGEX.captures(&title) {
@@ -194,7 +208,10 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         for results in data_part.select(&DD_SELECTOR) {
             let mut stripped = results.inner_html();
 
-            stripped = parse_html_to_markdown(NAIVE_STRIPPER_REGEX.replace_all(&stripped, "").to_string(), path_to_doc);
+            stripped = parse_html_to_markdown(
+                NAIVE_STRIPPER_REGEX.replace_all(&stripped, "").to_string(),
+                path_to_doc,
+            );
             if stripped.is_empty() {
                 continue;
             }
@@ -202,7 +219,10 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
             opt_array.push(stripped);
         }
 
-        let is_code_header = data_part.value().has_class("codedd", scraper::CaseSensitivity::CaseSensitive) || data_title == "Format";
+        let is_code_header = data_part
+            .value()
+            .has_class("codedd", scraper::CaseSensitivity::CaseSensitive)
+            || data_title == "Format";
 
         headers.push((data_title, opt_array, is_code_header));
     }
@@ -211,13 +231,12 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
 
     let mut write_after: Vec<String> = Vec::new();
     for part in &headers {
-        let mut to_write= format!("### {}", part.0);
+        let mut to_write = format!("### {}", part.0);
 
         if part.1.len() > 1 {
             to_write.push('\n');
 
             for string in &part.1 {
-
                 if part.0 == "Args" && string.contains(':') {
                     let split: Vec<&str> = string.split(':').collect();
 
@@ -233,7 +252,6 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
 
                 to_write.push('\n');
             }
-
         } else if let Some(wrap) = part.1.first() {
             if part.2 {
                 to_write = format!("{}\n> `{}`", to_write, wrap)
@@ -252,36 +270,63 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
     for text_part in document.select(&TEXT_SELECTOR) {
         match text_part.value().name() {
             "p" => {
-                if text_part.value().has_class("note", scraper::CaseSensitivity::CaseSensitive) || text_part.inner_html().starts_with("Note:") {
+                if text_part
+                    .value()
+                    .has_class("note", scraper::CaseSensitivity::CaseSensitive)
+                    || text_part.inner_html().starts_with("Note:")
+                {
                     let mut note_type = "note";
 
-                    if text_part.value().has_class("deprecated", scraper::CaseSensitivity::CaseSensitive) {
+                    if text_part
+                        .value()
+                        .has_class("deprecated", scraper::CaseSensitivity::CaseSensitive)
+                    {
                         note_type = "deprecated";
                     };
 
-                    if text_part.value().has_class("security", scraper::CaseSensitivity::CaseSensitive) {
+                    if text_part
+                        .value()
+                        .has_class("security", scraper::CaseSensitivity::CaseSensitive)
+                    {
                         note_type = "danger";
                     };
 
-                    text.push(format!("> [!{}]\n> {}", note_type, parse_html_to_markdown(text_part.inner_html().replace("Note:", ""), path_to_doc)));
+                    text.push(format!(
+                        "> [!{}]\n> {}",
+                        note_type,
+                        parse_html_to_markdown(
+                            text_part.inner_html().replace("Note:", ""),
+                            path_to_doc
+                        )
+                    ));
                 } else {
                     text.push(parse_html_to_markdown(text_part.inner_html(), path_to_doc));
                 }
-            },
+            }
             "h3" => {
                 if text_part.inner_html() == "Example:" {
                     continue;
                 }
 
-                text.push(format!("## {}", parse_html_to_markdown(text_part.inner_html(), path_to_doc)));
-            },
+                text.push(format!(
+                    "## {}",
+                    parse_html_to_markdown(text_part.inner_html(), path_to_doc)
+                ));
+            }
             "xmp" => {
                 if let Some(ref target) = target_name {
-                    text.push(format!("```dream-maker /{}/\n{}\n```", target, text_part.inner_html().trim()));
+                    text.push(format!(
+                        "```dream-maker /{}/\n{}\n```",
+                        target,
+                        text_part.inner_html().trim()
+                    ));
                 } else {
-                    text.push(format!("```dream-maker\n{}\n```", text_part.inner_html().trim()));
+                    text.push(format!(
+                        "```dream-maker\n{}\n```",
+                        text_part.inner_html().trim()
+                    ));
                 }
-            },
+            }
             "pre" => text.push(format!("```\n{}\n```", text_part.inner_html().trim())),
             "ul" => text.push(parse_html_to_markdown(text_part.html(), path_to_doc)),
             _ => (),
@@ -292,7 +337,9 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
         text.push(part);
     }
 
-    let version = title_element.attr("byondver").map(|version| version.to_string());
+    let version = title_element
+        .attr("byondver")
+        .map(|version| version.to_string());
 
     let mut parsed_metadata = Vec::new();
 
@@ -301,7 +348,15 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
             continue;
         }
 
-        parsed_metadata.push((element.0.to_owned(), element.1.to_owned().iter().map(|val| val.replace('\\', "").replace("%%", "\\%\\%")).collect()));
+        parsed_metadata.push((
+            element.0.to_owned(),
+            element
+                .1
+                .to_owned()
+                .iter()
+                .map(|val| val.replace('\\', "").replace("%%", "\\%\\%"))
+                .collect(),
+        ));
     }
 
     path_to_page.insert(
@@ -311,33 +366,35 @@ fn create_page_from_html(page_path: &String, document: &Html, path_to_page: &mut
             body: text.join("\n\n"),
             version,
             tags,
-            metadata: parsed_metadata
+            metadata: parsed_metadata,
         },
     );
 }
 
 lazy_static! {
     static ref CODE_REGEX: Regex = Regex::new("<(/)?(tt|code)>").unwrap();
+    static ref ORPHAN_TT_REGEX: Regex = Regex::new(r"(?i)tt>").unwrap();
     static ref LINK_BACKSLASH_REGEX: Regex = Regex::new("(`.*\\.*`)").unwrap();
     static ref CODE_PERCENT_REGEX: Regex = Regex::new("`(.*)(%%)(.*)`").unwrap();
-
     static ref NAIVE_STRIPPER_REGEX: Regex = Regex::new("<a name.*>.*</a>").unwrap();
-
     static ref A_LINK_SELECTOR: Selector = Selector::parse("a[href]").unwrap();
 }
 
 fn parse_html_to_markdown(html: String, all_pages: &HashMap<String, Html>) -> String {
     let mut html = html.replace('\n', " ");
     html = CODE_REGEX.replace_all(&html, "`".to_string()).to_string();
+    html = ORPHAN_TT_REGEX.replace_all(&html, "").to_string();
 
     let fragment = Html::parse_fragment(&html);
     for link in fragment.select(&A_LINK_SELECTOR) {
         if let Some(dest) = link.attr("href") {
-
             let final_destination = dest.replace('#', "");
 
             if all_pages.get(&final_destination).is_none() && !final_destination.contains("http") {
-                html = html.replace(&link.html(), &format!("**BROKEN LINK: {}**", make_ref_web_safe(&final_destination)));
+                html = html.replace(
+                    &link.html(),
+                    &format!("**BROKEN LINK: {}**", make_ref_web_safe(&final_destination)),
+                );
                 continue;
             }
 
@@ -349,7 +406,6 @@ fn parse_html_to_markdown(html: String, all_pages: &HashMap<String, Html>) -> St
                     make_ref_web_safe(&final_destination),
                 ),
             );
-
         }
     }
 
@@ -358,11 +414,12 @@ fn parse_html_to_markdown(html: String, all_pages: &HashMap<String, Html>) -> St
     let stripped = NAIVE_STRIPPER_REGEX.replace_all(&html, "").to_string();
 
     clean_code_backslashes(&clean_code_percentage(&stripped))
-
 }
 
 fn clean_code_percentage(input: &str) -> String {
-    CODE_PERCENT_REGEX.replace_all(input, r#"`${1}%25%25${3}`"#).to_string()
+    CODE_PERCENT_REGEX
+        .replace_all(input, r#"`${1}%25%25${3}`"#)
+        .to_string()
 }
 
 fn clean_code_backslashes(input: &str) -> String {
@@ -376,6 +433,65 @@ fn clean_code_backslashes(input: &str) -> String {
     }
 
     cleaning
+}
+
+fn escape_dollars_outside_code(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let chars: Vec<char> = input.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        if chars[i] == '`' {
+            let mut backtick_count = 0;
+            let start = i;
+            while i < len && chars[i] == '`' {
+                backtick_count += 1;
+                i += 1;
+            }
+
+            let mut found_close = false;
+            let mut j = i;
+            while j <= len - backtick_count {
+                let mut matches = true;
+                for k in 0..backtick_count {
+                    if chars[j + k] != '`' {
+                        matches = false;
+                        break;
+                    }
+                }
+                if matches {
+                    let after = j + backtick_count;
+                    let before_ok = j == i || chars[j - 1] != '`';
+                    let after_ok = after >= len || chars[after] != '`';
+                    if before_ok && after_ok {
+                        for &c in &chars[start..after] {
+                            result.push(c);
+                        }
+                        i = after;
+                        found_close = true;
+                        break;
+                    }
+                }
+                j += 1;
+            }
+
+            if !found_close {
+                for &c in &chars[start..i] {
+                    result.push(c);
+                }
+            }
+        } else if chars[i] == '$' {
+            result.push('\\');
+            result.push('$');
+            i += 1;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
 }
 
 const TEXT_REPLACEMENTS: &[(char, &str)] = &[
@@ -415,7 +531,7 @@ fn make_ref_web_safe(dirty_path: &str) -> String {
 
     path = path.replace("//", "/slash");
     path = path.replace("/index", "/index_page");
-    
+
     if path.contains("operator") {
         path = path.replace('-', "minus");
     }
@@ -426,5 +542,8 @@ fn make_ref_web_safe(dirty_path: &str) -> String {
 }
 
 fn remove_html_encode(dirty: &str) -> String {
-    dirty.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    dirty
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
 }
