@@ -437,61 +437,51 @@ fn clean_code_backslashes(input: &str) -> String {
 
 fn escape_dollars_outside_code(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
-    let chars: Vec<char> = input.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
+    let mut remaining = input;
 
-    while i < len {
-        if chars[i] == '`' {
-            let mut backtick_count = 0;
-            let start = i;
-            while i < len && chars[i] == '`' {
-                backtick_count += 1;
-                i += 1;
-            }
+    while !remaining.is_empty() {
+        if remaining.starts_with('`') {
+            let backtick_count = remaining.chars().take_while(|&c| c == '`').count();
+            let opener = &remaining[..backtick_count];
+            remaining = &remaining[backtick_count..];
 
-            let mut found_close = false;
-            let mut j = i;
-            while j <= len - backtick_count {
-                let mut matches = true;
-                for k in 0..backtick_count {
-                    if chars[j + k] != '`' {
-                        matches = false;
-                        break;
-                    }
-                }
-                if matches {
-                    let after = j + backtick_count;
-                    let before_ok = j == i || chars[j - 1] != '`';
-                    let after_ok = after >= len || chars[after] != '`';
-                    if before_ok && after_ok {
-                        for &c in &chars[start..after] {
-                            result.push(c);
-                        }
-                        i = after;
-                        found_close = true;
-                        break;
-                    }
-                }
-                j += 1;
+            if let Some(close_pos) = find_closing_backticks(remaining, backtick_count) {
+                result.push_str(opener);
+                result.push_str(&remaining[..close_pos + backtick_count]);
+                remaining = &remaining[close_pos + backtick_count..];
+            } else {
+                result.push_str(opener);
             }
-
-            if !found_close {
-                for &c in &chars[start..i] {
-                    result.push(c);
-                }
-            }
-        } else if chars[i] == '$' {
-            result.push('\\');
-            result.push('$');
-            i += 1;
+        } else if remaining.starts_with('$') {
+            result.push_str("\\$");
+            remaining = &remaining[1..];
         } else {
-            result.push(chars[i]);
-            i += 1;
+            let c = remaining.chars().next().unwrap();
+            result.push(c);
+            remaining = &remaining[c.len_utf8()..];
         }
     }
 
     result
+}
+
+fn find_closing_backticks(s: &str, count: usize) -> Option<usize> {
+    let pattern = "`".repeat(count);
+    let mut search_start = 0;
+
+    while let Some(pos) = s[search_start..].find(&pattern) {
+        let absolute_pos = search_start + pos;
+
+        let before_ok = absolute_pos == 0 || !s[..absolute_pos].ends_with('`');
+        let after_end = absolute_pos + count;
+        let after_ok = after_end >= s.len() || !s[after_end..].starts_with('`');
+
+        if before_ok && after_ok {
+            return Some(absolute_pos);
+        }
+        search_start = absolute_pos + 1;
+    }
+    None
 }
 
 const TEXT_REPLACEMENTS: &[(char, &str)] = &[
