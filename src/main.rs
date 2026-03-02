@@ -222,7 +222,33 @@ fn create_page_from_html(
     }
 
     let mut headers: Vec<(String, Vec<String>, bool)> = Vec::new();
+    let mut codedt_blocks: Vec<String> = Vec::new();
     for data_part in document.select(&DL_SELECTOR) {
+        if data_part
+            .value()
+            .has_class("codedt", scraper::CaseSensitivity::CaseSensitive)
+        {
+            let mut definition_list = String::new();
+            let dt_elements: Vec<_> = data_part.select(&DT_SELECTOR).collect();
+            let dd_elements: Vec<_> = data_part.select(&DD_SELECTOR).collect();
+
+            for (dt, dd) in dt_elements.iter().zip(dd_elements.iter()) {
+                let term = parse_html_to_markdown(dt.inner_html(), path_to_doc);
+                let description = parse_html_to_markdown(dd.inner_html(), path_to_doc);
+                let _ = writeln!(
+                    definition_list,
+                    "- **{}**: {}",
+                    term.trim(),
+                    description.trim()
+                );
+            }
+
+            if !definition_list.is_empty() {
+                codedt_blocks.push(definition_list.trim().to_string());
+            }
+            continue;
+        }
+
         let Some(mut data_title_element) = data_part.select(&DT_SELECTOR).next() else {
             continue;
         };
@@ -302,6 +328,10 @@ fn create_page_from_html(
         }
     }
 
+    for block in codedt_blocks {
+        text.push(block);
+    }
+
     for text_part in document.select(&TEXT_SELECTOR) {
         match text_part.value().name() {
             "p" => {
@@ -362,7 +392,15 @@ fn create_page_from_html(
                     ));
                 }
             }
-            "pre" => text.push(format!("```\n{}\n```", text_part.inner_html().trim())),
+            "pre" => {
+                let has_child_elements =
+                    text_part.children().any(|child| child.value().is_element());
+                if has_child_elements {
+                    text.push(text_part.html());
+                } else {
+                    text.push(format!("```\n{}\n```", text_part.inner_html().trim()));
+                }
+            }
             "ul" => text.push(parse_html_to_markdown(text_part.html(), path_to_doc)),
             _ => (),
         }
